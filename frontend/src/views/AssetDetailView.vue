@@ -14,6 +14,30 @@
       </v-card-title>
 
       <v-card-text>
+        <v-row v-if="asset">
+          <v-col cols="12" md="4">
+            <v-img
+              v-if="photoUrl"
+              :src="photoUrl"
+              max-height="220"
+              contain
+              class="rounded border"
+            />
+            <div v-else class="pa-6 text-center text-grey border rounded">Фото не загружено</div>
+            <v-file-input
+              v-if="auth.isZavhoz"
+              class="mt-2"
+              label="Загрузить фото"
+              accept="image/*"
+              prepend-icon="mdi-camera"
+              density="compact"
+              hide-details
+              :loading="photoUploading"
+              @update:model-value="onPhotoChange"
+            />
+          </v-col>
+        </v-row>
+
         <v-row>
           <v-col cols="12" md="6">
             <v-list density="compact">
@@ -153,6 +177,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { getAuthorizedBlob } from '@/api/client'
 import { assetsApi, referenceApi, structureApi, usersApi } from '@/api/endpoints'
 import { useAuthStore } from '@/store/auth'
 import type { Asset, AssetType, Room, User } from '@/types'
@@ -166,6 +191,9 @@ const assetTypes = ref<AssetType[]>([])
 const rooms = ref<Room[]>([])
 const users = ref<User[]>([])
 const busy = ref(false)
+
+const photoUrl = ref<string | null>(null)
+const photoUploading = ref(false)
 
 const moveDialog = ref(false)
 const repairDialog = ref(false)
@@ -222,6 +250,30 @@ async function loadAsset(): Promise<void> {
     asset.value = await assetsApi.get(String(route.params.id))
   } catch {
     asset.value = null
+  }
+  await loadPhoto()
+}
+
+async function loadPhoto(): Promise<void> {
+  if (photoUrl.value) URL.revokeObjectURL(photoUrl.value)
+  photoUrl.value = null
+  if (!asset.value?.photo_path) return
+  try {
+    const blob = await getAuthorizedBlob(`/assets/${asset.value.id}/photo`)
+    photoUrl.value = URL.createObjectURL(blob)
+  } catch {
+    photoUrl.value = null
+  }
+}
+
+async function onPhotoChange(file: File | null | undefined): Promise<void> {
+  if (!asset.value || !file) return
+  photoUploading.value = true
+  try {
+    await assetsApi.uploadPhoto(asset.value.id, file)
+    await loadAsset()
+  } finally {
+    photoUploading.value = false
   }
 }
 

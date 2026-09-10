@@ -118,3 +118,51 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   }
   return (await response.json()) as T
 }
+
+// Загрузка файла (multipart/form-data) с авторизацией и автообновлением токена.
+export async function apiUpload<T>(path: string, file: File): Promise<T> {
+  const url = `${BASE_URL}${path}`
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const doRequest = async (token: string | null): Promise<Response> => {
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    // Content-Type не задаём: браузер сам выставит boundary для multipart.
+    return fetch(url, { method: 'POST', headers, body: formData })
+  }
+
+  let response = await doRequest(getAccessToken())
+  if (response.status === 401) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      response = await doRequest(newToken)
+    } else {
+      clearTokens()
+      throw new ApiError(401, 'Сессия истекла')
+    }
+  }
+
+  if (!response.ok) {
+    let message = `Ошибка загрузки (${response.status})`
+    try {
+      const data = (await response.json()) as ApiErrorBody
+      if (data.detail) message = data.detail
+    } catch {
+      // тело не JSON
+    }
+    throw new ApiError(response.status, message)
+  }
+  return (await response.json()) as T
+}
+
+// Получение файла (например, фото) как Blob с Bearer-авторизацией.
+export async function getAuthorizedBlob(path: string): Promise<Blob> {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${getAccessToken()}` },
+  })
+  if (!response.ok) {
+    throw new ApiError(response.status, `Не удалось получить файл (${response.status})`)
+  }
+  return response.blob()
+}

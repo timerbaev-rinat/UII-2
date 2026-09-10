@@ -10,7 +10,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +36,7 @@ from app.schemas.asset import (
 )
 from app.services.audit import write_audit
 from app.services.numbering import generate_number
+from app.services.storage import IMAGE_EXTENSIONS, delete_file, media_type_for, resolve_path, save_upload
 
 router = APIRouter()
 
@@ -173,6 +184,57 @@ async def create_asset(
 )
 async def get_asset(asset_id: uuid.UUID, db: DbSession):
     return await _get_asset_or_404(db, asset_id)
+
+
+@router.post(
+    "/{asset_id}/photo",
+    response_model=AssetOut,
+    dependencies=[Depends(require_permission(Perm.EDIT_CARD))],
+    summary="Загрузка фото карточки",
+)
+async def upload_asset_photo(
+    asset_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    request: Request,
+    file: UploadFile = File(...),
+):
+    asset = await _get_asset_or_404(db, asset_id)
+    rel_path, _, _ = await save_upload(
+        file, subdir=f"assets/{asset.inventory_number}", allowed_extensions=IMAGE_EXTENSIONS
+    )
+    # Удаляем старое фото, если было
+    if asset.photo_path:
+        delete_file(asset.photo_path)
+    asset.photo_path = rel_path
+
+    await write_audit(
+        db,
+        user_id=user.id,
+        action="UPLOAD_PHOTO",
+        entity_type="asset",
+        entity_id=str(asset.id),
+        new_value=rel_path,
+        ip_address=_get_client_ip(request) if request else None,
+    )
+    await db.commit()
+    await db.refresh(asset)
+    return asset
+
+
+@router.get(
+    "/{asset_id}/photo",
+    dependencies=[Depends(require_permission(Perm.VIEW_CARDS))],
+    summary="Фото карточки",
+)
+async def get_asset_photo(asset_id: uuid.UUID, db: DbSession):
+    asset = await _get_asset_or_404(db, asset_id)
+    if not asset.photo_path:
+        raise HTTPException(status_code=404, detail="Фото не загружено")
+    path = resolve_path(asset.photo_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл фото не найден")
+    return FileResponse(path, media_type=media_type_for(asset.photo_path))
 
 
 @router.patch(

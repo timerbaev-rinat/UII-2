@@ -1,6 +1,6 @@
 // Функции вызова API бэкенда.
 
-import { api } from './client'
+import { api, apiUpload } from './client'
 import type {
   Asset,
   AssetCreate,
@@ -68,6 +68,8 @@ export const assetsApi = {
   list: (params?: Record<string, string | number | boolean>) =>
     api<Asset[]>('/assets', { params }),
   get: (id: string) => api<Asset>(`/assets/${id}`),
+  uploadPhoto: (id: string, file: File) =>
+    apiUpload<Asset>(`/assets/${id}/photo`, file),
   create: (payload: AssetCreate) => api<Asset>('/assets', { method: 'POST', body: payload }),
   update: (id: string, payload: Partial<AssetCreate>) =>
     api<Asset>(`/assets/${id}`, { method: 'PATCH', body: payload }),
@@ -121,6 +123,8 @@ export const documentsApi = {
   list: () => api<Document[]>('/documents'),
   create: (payload: Partial<Document>) =>
     api<Document>('/documents', { method: 'POST', body: payload }),
+  uploadFile: (id: string, file: File) =>
+    apiUpload<Document>(`/documents/${id}/upload`, file),
   changeStatus: (id: string, payload: { status: string; comment?: string }) =>
     api<Document>(`/documents/${id}/status`, { method: 'POST', body: payload }),
   sign: (id: string, payload: { comment?: string }) =>

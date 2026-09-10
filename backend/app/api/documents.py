@@ -10,7 +10,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +34,13 @@ from app.schemas.document import (
 )
 from app.schemas.operation import StatusChangeRequest
 from app.services.audit import write_audit
+from app.services.storage import (
+    DOCUMENT_EXTENSIONS,
+    delete_file,
+    media_type_for,
+    resolve_path,
+    save_upload,
+)
 
 router = APIRouter()
 
@@ -105,6 +121,71 @@ async def create_document(
     await db.commit()
     await db.refresh(doc)
     return doc
+
+
+@router.post(
+    "/{doc_id}/upload",
+    response_model=DocumentOut,
+    dependencies=[Depends(require_permission(Perm.EDIT_CARD))],
+    summary="Загрузка файла документа",
+)
+async def upload_document_file(
+    doc_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    request: Request,
+    file: UploadFile = File(...),
+):
+    doc = await _get_doc_or_404(db, doc_id)
+    if doc.status == DocumentStatusEnum.APPROVED.value:
+        raise HTTPException(
+            status_code=400, detail="Утверждённый документ нельзя изменять"
+        )
+
+    rel_path, original_name, size = await save_upload(
+        file,
+        subdir=f"documents/{doc.id}",
+        allowed_extensions=DOCUMENT_EXTENSIONS,
+    )
+    # Удаляем прежний файл, если был
+    if doc.file_path:
+        delete_file(doc.file_path)
+    doc.file_path = rel_path
+    doc.file_name = original_name
+    doc.file_size = size
+    doc.mime_type = file.content_type or media_type_for(rel_path)
+
+    await write_audit(
+        db,
+        user_id=user.id,
+        action="UPLOAD_FILE",
+        entity_type="document",
+        entity_id=str(doc.id),
+        new_value=original_name,
+        ip_address=_get_client_ip(request),
+    )
+    await db.commit()
+    await db.refresh(doc)
+    return doc
+
+
+@router.get(
+    "/{doc_id}/download",
+    dependencies=[Depends(require_permission(Perm.VIEW_CARDS))],
+    summary="Скачивание файла документа",
+)
+async def download_document_file(doc_id: uuid.UUID, db: DbSession):
+    doc = await _get_doc_or_404(db, doc_id)
+    if not doc.file_path:
+        raise HTTPException(status_code=404, detail="Файл не загружен")
+    path = resolve_path(doc.file_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    return FileResponse(
+        path,
+        media_type=doc.mime_type or media_type_for(doc.file_path),
+        filename=doc.file_name or path.name,
+    )
 
 
 @router.get(
