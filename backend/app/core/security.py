@@ -10,27 +10,31 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import bcrypt
 import jwt
-from passlib.context import CryptContext
 
 from app.config import settings
-
-# bcrypt — алгоритм хэширования паролей
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Отдельный контекст для refresh-токенов (тип токена в payload)
 ACCESS_TOKEN_TYPE = "access"
 REFRESH_TOKEN_TYPE = "refresh"
 
+# Пароли хэшируются bcrypt напрямую (passlib несовместим с bcrypt>=4.1).
+
 
 def hash_password(password: str) -> str:
-    """Возвращает хэш пароля."""
-    return pwd_context.hash(password)
+    """Возвращает bcrypt-хэш пароля."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Проверяет пароль по хэшу."""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Проверяет пароль по хэшу (устойчиво к некорректным хэшам)."""
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"), hashed_password.encode("utf-8")
+        )
+    except (ValueError, TypeError):
+        return False
 
 
 def _create_token(

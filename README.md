@@ -51,6 +51,17 @@ npm install
 npm run dev
 ```
 
+## Безопасность, бэкапы и деплой
+
+- **Заголовки безопасности/CSP**, **HttpOnly-кука** для refresh-токена,
+  **валидация загрузок** (тип/размер/magic-bytes), структурированное логирование.
+- **Автоматический бэкап БД** по расписанию (сервис `backup`,
+  pg_dump → gzip → том `backups`), скрипты `scripts/backup.sh` / `scripts/restore.sh`.
+- **HTTPS** — образец конфигурации `nginx/nginx.https.conf`.
+
+Полная инструкция по эксплуатации — [`docs/operations.md`](docs/operations.md).
+Руководство пользователя (роли, работа на ПК и смартфоне) — [`docs/user-guide.md`](docs/user-guide.md).
+
 ## Структура репозитория
 
 ```

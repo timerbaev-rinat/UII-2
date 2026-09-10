@@ -1,17 +1,32 @@
 """Точка входа FastAPI-приложения.
 
-Собирает приложение, подключает CORS, роутеры и обрабатывает
-запуск/остановку (проверка БД при старте).
+Собирает приложение, подключает CORS, middleware безопасности/логирования,
+обработчик ошибок и роутеры.
 """
 
+from __future__ import annotations
+
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app import api
 from app.config import settings
+from app.core.middleware import (
+    RequestLoggingMiddleware,
+    SecurityHeadersMiddleware,
+    setup_logging,
+)
 from app.database import Base, engine
+
+logger = logging.getLogger("app.main")
+
+# Настройка логов при импорте модуля
+setup_logging()
 
 
 @asynccontextmanager
@@ -42,6 +57,10 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
+# --- Middleware (внешние добавляются последними) ---
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts_list)
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 # CORS (для локальной разработки фронта отдельно от бэкенда)
 app.add_middleware(
     CORSMiddleware,
@@ -53,6 +72,21 @@ app.add_middleware(
 
 # Подключение роутеров
 app.include_router(api.router)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Глобальный обработчик: логирует причину, клиенту отдаёт общее сообщение."""
+    logger.exception(
+        "Unhandled error on %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Внутренняя ошибка сервера"},
+    )
 
 
 @app.get("/", tags=["health"])

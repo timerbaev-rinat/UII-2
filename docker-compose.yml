@@ -48,6 +48,36 @@ services:
     depends_on:
       - backend
 
+  # Автоматический бэкап БД по расписанию (pg_dump -> gzip)
+  backup:
+    image: postgres:16-alpine
+    container_name: asset_backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-asset_school}
+      POSTGRES_USER: ${POSTGRES_USER:-asset_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_strong_password}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      BACKUP_DIR: /backups
+      RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+    volumes:
+      - ./scripts:/scripts:ro
+      - backups:/backups
+    entrypoint: >
+      /bin/sh -c '
+        chmod +x /scripts/backup.sh &&
+        echo "[backup] Сервис запущен, интервал $${BACKUP_INTERVAL_HOURS} ч." &&
+        while true; do
+          /scripts/backup.sh || echo "[backup] Ошибка бэкапа (см. выше)";
+          sleep $${BACKUP_INTERVAL_HOURS}h;
+        done
+      '
+
   nginx:
     image: nginx:1.27-alpine
     container_name: asset_nginx
@@ -63,3 +93,4 @@ services:
 volumes:
   pgdata:
   uploads:
+  backups:

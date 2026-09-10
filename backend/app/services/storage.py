@@ -60,6 +60,37 @@ def _max_size_bytes() -> int:
     return settings.max_upload_size_mb * 1024 * 1024
 
 
+# Сигнатуры (magic bytes) для проверки фактического формата изображений.
+_IMAGE_MAGIC = {
+    ".jpg": (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".gif": (b"GIF87a", b"GIF89a"),
+    ".webp": (b"RIFF",),  # + "WEBP" на смещении 8
+}
+
+
+def _check_image_magic(content: bytes, ext: str) -> None:
+    """Проверяет сигнатуру файла против расширения (защита от подделки)."""
+    signatures = _IMAGE_MAGIC.get(ext)
+    if not signatures:
+        return
+    if any(content.startswith(sig) for sig in signatures):
+        if ext == ".webp":
+            # RIFF ... + "WEBP" на байтах 8..11
+            if len(content) >= 12 and content[8:12] == b"WEBP":
+                return
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Файл не является корректным изображением WebP",
+            )
+        return
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Содержимое файла не соответствует расширению «{ext}»",
+    )
+
+
 async def save_upload(
     file: UploadFile,
     *,
@@ -98,6 +129,10 @@ async def save_upload(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"Файл превышает максимальный размер {settings.max_upload_size_mb} МБ",
         )
+
+    # Проверка фактического формата изображений (защита от подделки расширения)
+    if ext in IMAGE_EXTENSIONS:
+        _check_image_magic(content, ext)
 
     unique_name = f"{uuid.uuid4().hex}{ext}"
     rel_dir = Path(subdir)

@@ -10,10 +10,11 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.deps import (
     CurrentUser,
     DbSession,
@@ -62,12 +63,31 @@ def _get_client_ip(request: Request) -> str | None:
     return None
 
 
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    """Устанавливает refresh-токен в HttpOnly-куку (если включено настройкой).
+
+    Смягчает последствия XSS: кука недоступна из JS.
+    """
+    if not settings.cookie_name:
+        return
+    response.set_cookie(
+        key=settings.cookie_name,
+        value=token,
+        httponly=settings.cookie_httponly,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        max_age=settings.refresh_token_expire_days * 86400,
+        path="/",
+    )
+
+
 # --- Авторизация ---
 @router.post("/login", response_model=TokenPair, summary="Вход")
 async def login(
     payload: LoginRequest,
     db: DbSession,
     request: Request,
+    response: Response,
 ):
     result = await db.execute(select(User).where(User.login == payload.login))
     user = result.scalar_one_or_none()
@@ -86,14 +106,16 @@ async def login(
     )
     await db.commit()
 
+    refresh_token = create_refresh_token(user.id)
+    _set_refresh_cookie(response, refresh_token)
     return TokenPair(
         access_token=create_access_token(user.id),
-        refresh_token=create_refresh_token(user.id),
+        refresh_token=refresh_token,
     )
 
 
 @router.post("/refresh", response_model=TokenPair, summary="Обновление токена")
-async def refresh(payload: RefreshRequest, db: DbSession):
+async def refresh(payload: RefreshRequest, db: DbSession, response: Response):
     try:
         data = decode_token(payload.refresh_token)
         if data.get("type") != REFRESH_TOKEN_TYPE:
@@ -107,9 +129,11 @@ async def refresh(payload: RefreshRequest, db: DbSession):
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="Пользователь не активен")
 
+    refresh_token = create_refresh_token(user.id)
+    _set_refresh_cookie(response, refresh_token)
     return TokenPair(
         access_token=create_access_token(user.id),
-        refresh_token=create_refresh_token(user.id),
+        refresh_token=refresh_token,
     )
 
 
